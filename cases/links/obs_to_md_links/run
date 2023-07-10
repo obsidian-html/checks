@@ -1,0 +1,134 @@
+#!/bin/bash
+pushd () {
+    command pushd "$@" > /dev/null
+}
+popd () {
+    command popd "$@" > /dev/null
+}
+
+function run_tests {
+    local TEST_FOLDER="$1"
+    local CURRENT="$2"
+
+    printf "${TEST_FOLDER}: "
+    diff "$TEST_FOLDER/output/md/index.md" "$CURRENT/output/md/index.md"
+    if [[ $? != "0" ]]; then
+        echo "ERROR"
+    else
+        echo "OK"
+    fi
+}
+
+function clean_untestable {
+    # remove files/folders that should not be tested on
+    local CURRENT="$1"
+    /bin/rm -rf "$CURRENT/output/mod"
+}
+
+function compile_config {
+    local TEST_FOLDER="$1"
+    local ROOT="$2"
+    envsubst < "$FOLDER/config.yml" > "$ROOT/config.yml"
+
+    echo "md_folder_path_str:  '$ROOT/output/md'" >> $ROOT/config.yml
+    echo "md_entrypoint_path_str: '$ROOT/output/md/index.md'" >> $ROOT/config.yml
+    echo "html_output_folder_path_str: '$ROOT/output/html'" >> $ROOT/config.yml
+    echo "module_data_folder: '$ROOT/output/mod'" >> $ROOT/config.yml
+}
+
+function print_config {
+    echo "---"
+    cat /tmp/checks/config.yml
+    echo "---"
+}
+
+function host {
+    local TEST_FOLDER="$1"
+    firefox localhost:8080
+    python -m http.server --directory $TEST_FOLDER/output/html 8080
+}
+
+
+# CONFIG & PREP
+# ====================================================================
+[ -z "$OBSHTML_DIR" ] && echo "ERROR: env variable OBSHTML_DIR not set" 1>&2 && exit 1
+
+# use "./run -r" to set the expected output in the current folder
+# use "./run -v" to test the output against the expected output
+RELOAD=""
+
+# set verbose to show more info other than folder + OK/ERR
+VERBOSE=""
+
+# host the html output when done and open in firefox
+HOST=""
+
+while getopts "vrh" arg; do
+  case $arg in
+    v)
+      VERBOSE="true"
+      ;;
+    r)
+      RELOAD="true"
+      ;;
+    h)
+      HOST="true"
+      ;;
+  esac
+done
+
+# set current folder
+export FOLDER="$(pwd)"
+[ ! -z "$VERBOSE" ] && echo "$FOLDER"
+
+# set and prepare tempdir
+/bin/rm -rf /tmp/checks/*
+export ROOT="/tmp/checks"
+mkdir -p "$ROOT"
+
+# move to custom obsidian-html dir so we can run python -m obsidianhtml
+pushd $OBSHTML_DIR
+
+# print obsidianhtml version
+#python -m obsidianhtml version
+
+# RUN
+# ====================================================================
+# copy input to TEST_DIR
+cp -R "$FOLDER/vault" "$ROOT/vault"
+
+# compile_config
+compile_config "$FOLDER" "$ROOT"
+[ ! -z "$VERBOSE" ] && print_config
+
+# run code
+[ ! -z "$VERBOSE" ] && python -m obsidianhtml version && echo
+[ -z "$VERBOSE" ] && echo "${FOLDER}: Running..."
+python -m obsidianhtml convert -i /tmp/checks/config.yml
+clean_untestable "$ROOT"
+
+
+# RELOAD EXAMPLE OUTPUT
+# ====================================================================
+if [ ! -z "$RELOAD" ]; then
+    # copy generated output to "expected output" folder
+    /bin/rm -rf "$FOLDER/output"
+    cp -R "$ROOT/output" "$FOLDER/output"
+    echo "${FOLDER}: RELOADED"
+fi
+
+# TEST
+# ====================================================================
+if [ -z "$RELOAD" ]; then
+    # test if files are equal to what was expected
+    run_tests "$FOLDER" "$ROOT"
+fi
+
+# HOST
+# ====================================================================
+[ ! -z "$HOST" ] && host "$FOLDER"
+
+
+
+
+
